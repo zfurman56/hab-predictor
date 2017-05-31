@@ -9,14 +9,14 @@ struct UninitializedDataSetReader {
     dataset_directory: String
 }
 
-struct DataSetReader {
-    grib_readers: Vec<usize>,
+struct DataSetReader<'a> {
+    grib_readers: Vec<&'a Box<GribReader>>,
     grib_readers_raw: Vec<Box<GribReader>>
 }
 
 impl UninitializedDataSetReader {
 
-    fn initialize(&mut self) -> DataSetReader {
+    fn initialize<'a>(&mut self) -> DataSetReader<'a> {
         let mut readers_raw : Vec<Box<GribReader>> = vec![];
         DataSetReader {
             grib_readers: {
@@ -91,7 +91,7 @@ impl UninitializedDataSetReader {
                     }
                 };
 
-                let mut readers : Vec<usize> = vec![];
+                let mut readers : Vec<&Box<GribReader>> = vec![];
                 let mut last_hour = 0.0;
                 readers_raw.push(Box::new(GribReader::new((&bucket[0]).path().to_str().unwrap().to_string())));
 
@@ -109,11 +109,11 @@ impl UninitializedDataSetReader {
                     let reader = Box::new(GribReader::new(file.path().to_str().unwrap().to_string()));
 
                     for hr in (last_hour as i32)..divider {
-                        readers.insert((hr as usize), i);
+                        readers.insert((hr as usize), &readers_raw.last().unwrap());
                     }
 
                     for hr in divider..(hour as i32) {
-                        readers.insert((hr as usize), i+1);
+                        readers.insert((hr as usize), &reader);
                     }
 
                     last_hour = hour;
@@ -131,9 +131,9 @@ impl UninitializedDataSetReader {
     }
 }
 
-impl DataSetReader {
+impl<'a> DataSetReader<'a> {
 
-    pub fn new(dataset_directory : String) -> DataSetReader {
+    pub fn new(dataset_directory : String) -> DataSetReader<'a> {
         let mut reader = UninitializedDataSetReader {
             dataset_directory: dataset_directory
         };
@@ -151,21 +151,21 @@ impl DataSetReader {
 
     fn get_reader(&mut self, point: &Point) -> &Box<GribReader> {
 
-        let first_reader = &self.grib_readers_raw[self.grib_readers[0]];
+        let first_reader = &self.grib_readers[0];
         // Number of hours since the start of the data
         let num_hours = (((first_reader.time.signed_duration_since(point.time).num_minutes().abs()) as f64)/60.0).round() as usize;
 
         let best_reader = &self.grib_readers.get(num_hours);
 
         match best_reader {
-            &Some(index) => return &self.grib_readers_raw[*index],
+            &Some(reader) => return reader,
             _ => panic!("Error: Inputted time outside available time range for data"),
         }
     }
 }
 
 lazy_static! {
-    static ref READER : Mutex<DataSetReader> = Mutex::new(DataSetReader::new(
+    static ref READER : Mutex<DataSetReader<'static>> = Mutex::new(DataSetReader::new(
         [env::var("RAILS_ROOT").expect("RAILS_ROOT environment variable not found"), "/lib/data".to_string()].concat()
     ));
 }
